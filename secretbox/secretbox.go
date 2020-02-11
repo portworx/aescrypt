@@ -1,4 +1,13 @@
 /*
+	This is a modified version of the code from
+	https://github.com/kisom/aescrypt/secretbox/secretbox.go
+	The modification made is basically to ensure a preallocated buffer can
+	be input to both to both the Seal and Open methods so as to avoid
+	allocation of memory inside Seal and Open. If no preallocated buffer is
+	input, then the output buffer is allocated inside Seal and Open.
+*/
+
+/*
 	secretbox is used to authenticate and secure small messages. It
 	provides an interface similar to NaCL, but uses AES-128 in CTR
 	mode with HMAC-SHA-256 for securing messages.
@@ -29,7 +38,7 @@ import (
 const cryptKeySize = 16
 const tagKeySize = 32
 
-const VersionString = "2.0.0"
+const VersionString = "3.0.0"
 
 // KeySize is the number of bytes a valid key should be.
 const KeySize = cryptKeySize + tagKeySize
@@ -65,13 +74,13 @@ func generateNonce() (nonce, error) {
 	return n, err
 }
 
-func encrypt(key []byte, in []byte) (out []byte, err error) {
+func encrypt(key []byte, in []byte, obox []byte) (out []byte, err error) {
 	var iv nonce
 	if iv, err = generateNonce(); err != nil {
 		return
 	}
 
-	out = make([]byte, len(in)+aes.BlockSize)
+	out = obox[:len(in)+aes.BlockSize]
 	for i := 0; i < aes.BlockSize; i++ {
 		out[i] = iv[i]
 		iv[i] = 0
@@ -100,7 +109,7 @@ func checkTag(key, in []byte) bool {
 	return subtle.ConstantTimeCompare(tag, actualTag) == 1
 }
 
-func decrypt(key []byte, in []byte) (out []byte, err error) {
+func decrypt(key []byte, in []byte, omessage []byte) (out []byte, err error) {
 	if len(in) < aes.BlockSize {
 		return nil, errinvalidCiphertext
 	}
@@ -113,7 +122,7 @@ func decrypt(key []byte, in []byte) (out []byte, err error) {
 	iv := in[:aes.BlockSize]
 	ct := in[aes.BlockSize:]
 	ctr := cipher.NewCTR(c, iv)
-	out = make([]byte, len(ct))
+	out = omessage[0:len(ct)]
 	ctr.XORKeyStream(out, ct)
 	return
 }
@@ -122,12 +131,17 @@ func decrypt(key []byte, in []byte) (out []byte, err error) {
 // indicating whether the sealing operation was successful. If it returns
 // true, the message was successfully sealed. The box will be Overhead
 // bytes longer than the message.
-func Seal(message []byte, key Key) (box []byte, ok bool) {
+func Seal(message []byte, key Key, obox []byte) (box []byte, ok bool) {
 	if !KeyIsSuitable(key) {
 		return
 	}
 
-	ct, err := encrypt(key[:cryptKeySize], message)
+	out := obox
+	if out == nil || len(out) < len(message)+Overhead {
+		out = make([]byte, len(message)+Overhead)
+	}
+
+	ct, err := encrypt(key[:cryptKeySize], message, out)
 	if err != nil {
 		return
 	}
@@ -141,7 +155,7 @@ func Seal(message []byte, key Key) (box []byte, ok bool) {
 // whether the message was successfully opened. If this is false, the
 // message must be discarded. The returned message will be Overhead
 // bytes shorter than the box.
-func Open(box []byte, key Key) (message []byte, ok bool) {
+func Open(box []byte, key Key, omessage []byte) (message []byte, ok bool) {
 	if !KeyIsSuitable(key) {
 		return
 	} else if box == nil {
@@ -150,11 +164,16 @@ func Open(box []byte, key Key) (message []byte, ok bool) {
 		return
 	}
 
+	out := omessage
+	if out == nil || len(out) < len(box)-Overhead {
+		out = make([]byte, len(box)-Overhead)
+	}
+
 	msgLen := len(box) - sha256.Size
 	if !checkTag(key[cryptKeySize:], box) {
 		return nil, ok
 	}
-	message, err := decrypt(key[:cryptKeySize], box[:msgLen])
+	message, err := decrypt(key[:cryptKeySize], box[:msgLen], out)
 	ok = err == nil
 	return
 }

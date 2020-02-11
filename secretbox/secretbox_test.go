@@ -1,11 +1,13 @@
 package secretbox
 
-import "bytes"
-import "crypto/rand"
-import "fmt"
-import "io/ioutil"
-import "math/big"
-import "testing"
+import (
+	"bytes"
+	"crypto/rand"
+	"fmt"
+	"io/ioutil"
+	"math/big"
+	"testing"
+)
 
 var testMessages = []string{
 	"Hello, world.",
@@ -71,49 +73,11 @@ func mutate(in []byte) (out []byte) {
 	return out
 }
 
-// TestKeyGeneration generates a pair of keys, verifying that the key
-// generation code works properly.
-/*
-func TestKeyGeneration(t *testing.T) {
-	var err error
-	testGoodKey, err = GenerateKey()
-	if err != nil {
-		fmt.Println("Failed to generate key:", err.Error())
-		t.FailNow()
-	}
-	testBadKey, err = GenerateKey()
-	if err != nil {
-		fmt.Println("Failed to generate key:", err.Error())
-		t.FailNow()
-	}
-	    ioutil.WriteFile("testvectors/good.key", testGoodKey, 0644)
-	    ioutil.WriteFile("testvectors/bad.key", testBadKey, 0644)
-}
-*/
-
-/*
-func TestBasicUnbox(t *testing.T) {
-	testMessage := []byte{1, 2, 3, 4, 5}
-	testKey := []byte{
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-	}
-	box, ok := Seal(testMessage, testKey)
-	if !ok {
-		fmt.Println("[+] basic unboxing failed!")
-		t.FailNow()
-	}
-}
-*/
-
 // TestBoxing ensures that sealing a message into a box works properly.
 func TestBoxing(t *testing.T) {
 	for i := 0; i < len(testMessages); i++ {
-		box, ok := Seal([]byte(testMessages[i]), testGoodKey)
+		obox := make([]byte, len(testMessages[i])+Overhead)
+		box, ok := Seal([]byte(testMessages[i]), testGoodKey, obox)
 		if !ok {
 			fmt.Println("Boxing failed: message", i)
 			t.FailNow()
@@ -121,13 +85,6 @@ func TestBoxing(t *testing.T) {
 			fmt.Println("The box length is invalid.")
 			t.FailNow()
 		}
-		/*
-			fmt.Printf("vector[%d]: %x\n", i, box)
-			fileName := fmt.Sprintf("testvectors/test_box-%d.bin", i+1)
-			ioutil.WriteFile(fileName, box, 0644)
-			fileName = fmt.Sprintf("testvectors/test_vector-%d.bin", i+1)
-			ioutil.WriteFile(fileName, []byte(testMessages[i]), 0644)
-		*/
 		testBoxes[i] = string(box)
 	}
 }
@@ -136,7 +93,8 @@ func TestBoxing(t *testing.T) {
 // a message works properly.
 func TestUnboxing(t *testing.T) {
 	for i := 0; i < len(testMessages); i++ {
-		message, ok := Open([]byte(testBoxes[i]), testGoodKey)
+		obox := make([]byte, len(testBoxes[i])-Overhead)
+		message, ok := Open([]byte(testBoxes[i]), testGoodKey, obox)
 		if !ok {
 			fmt.Println("Unboxing failed: message", i)
 			t.FailNow()
@@ -152,12 +110,12 @@ func TestUnboxing(t *testing.T) {
 func TestEmptyBox(t *testing.T) {
 	var msg = []byte{}
 
-	box, ok := Seal(msg, testGoodKey)
+	box, ok := Seal(msg, testGoodKey, nil)
 	if !ok {
 		t.Fatal("secretbox: failed to seal message")
 	}
 
-	out, ok := Open(box, testGoodKey)
+	out, ok := Open(box, testGoodKey, nil)
 	if !ok {
 		t.Fatal("secretbox: failed to open message")
 	} else if !bytes.Equal(out, msg) {
@@ -169,12 +127,12 @@ func TestEmptyBox(t *testing.T) {
 // a box with the wrong key will fail.
 func TestUnboxingFails(t *testing.T) {
 	for i := 0; i < len(testMessages); i++ {
-		_, ok := Open([]byte(testBoxes[i]), testBadKey)
+		_, ok := Open([]byte(testBoxes[i]), testBadKey, nil)
 		if ok {
 			fmt.Println("Unboxing should have failed with bad key:", i)
 			t.FailNow()
 		}
-		_, ok = Open(mutate([]byte(testBoxes[i])), testGoodKey)
+		_, ok = Open(mutate([]byte(testBoxes[i])), testGoodKey, nil)
 		if ok {
 			fmt.Println("Modified message should have failed:", i)
 			t.FailNow()
@@ -191,13 +149,13 @@ func TestLargerBox(t *testing.T) {
 		t.FailNow()
 	}
 
-	box, ok := Seal(testBoxFile, testGoodKey)
+	box, ok := Seal(testBoxFile, testGoodKey, nil)
 	if !ok {
 		fmt.Println("Failed to box message.")
 		t.FailNow()
 	}
 
-	message, ok := Open(box, testGoodKey)
+	message, ok := Open(box, testGoodKey, nil)
 	if !ok {
 		fmt.Println("Failed to unbox message.")
 		t.FailNow()
@@ -212,7 +170,7 @@ func TestLargerBox(t *testing.T) {
 // Benchmark the Seal function, which secures the message.
 func BenchmarkSeal(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, ok := Seal(testBoxFile, testGoodKey)
+		_, ok := Seal(testBoxFile, testGoodKey, nil)
 		if !ok {
 			fmt.Println("Couldn't seal message: benchmark aborted.")
 			b.FailNow()
@@ -222,13 +180,13 @@ func BenchmarkSeal(b *testing.B) {
 
 // Benchmark the Open function, which retrieves a message from a box.
 func BenchmarkOpen(b *testing.B) {
-	box, ok := Seal(testBoxFile, testGoodKey)
+	box, ok := Seal(testBoxFile, testGoodKey, nil)
 	if !ok {
 		fmt.Println("Can't seal message: benchmark aborted.")
 		b.FailNow()
 	}
 	for i := 0; i < b.N; i++ {
-		_, ok := Open(box, testGoodKey)
+		_, ok := Open(box, testGoodKey, nil)
 		if !ok {
 			fmt.Println("Couldn't open message: benchmark aborted.")
 			b.FailNow()
